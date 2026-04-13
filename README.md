@@ -17,17 +17,104 @@ Replace this paragraph with your own summary of what your version does.
 
 ## How The System Works
 
-Explain your design in plain language.
+Real-world content-based recommendation systems work by representing both items and user preferences as structured feature vectors, then computing a similarity or compatibility score between them to rank candidates. Instead of relying on what other users liked (collaborative filtering), content-based systems reason directly about the properties of each item — in music, that means attributes like genre, mood, energy, and tempo. This simulation prioritizes five features drawn from `data/songs.csv`: genre and mood (categorical identity signals) and energy, valence, and tempo_bpm (continuous numeric signals that capture a song's emotional intensity and pace). For numerical features the system rewards closeness to a user's preference rather than simply favoring high or low values, using a weighted similarity formula so that a user who wants medium-energy chill music scores calm lofi tracks above both hard rock and silence. The result is a ranked list of the top 5 songs whose combined feature profile best matches the user's stated taste.
 
-Some prompts to answer:
+**`Song` object attributes:**
+- `id` — unique integer identifier
+- `title` — song name (string)
+- `artist` — artist name (string)
+- `genre` — categorical label: pop, lofi, rock, ambient, jazz, synthwave, indie pop
+- `mood` — categorical label: happy, chill, intense, relaxed, focused, moody
+- `energy` — float 0–1, overall intensity level
+- `valence` — float 0–1, musical positivity (high = bright/happy, low = dark/melancholic)
+- `tempo_bpm` — integer beats per minute
+- `danceability` — float 0–1, suitability for dancing
+- `acousticness` — float 0–1, acoustic vs. electronic character
 
-- What features does each `Song` use in your system
-  - For example: genre, mood, energy, tempo
-- What information does your `UserProfile` store
-- How does your `Recommender` compute a score for each song
-- How do you choose which songs to recommend
+**`UserProfile` object attributes:**
+- `preferred_genre` — user's favourite genre (string, matches Song genre labels)
+- `preferred_mood` — desired listening mood (string, matches Song mood labels)
+- `preferred_energy` — target energy level (float 0–1)
+- `preferred_valence` — target emotional tone (float 0–1)
+- `preferred_tempo_bpm` — target tempo in beats per minute (integer)
 
-You can include a simple diagram or bullet list if helpful.
+---
+
+### Example User Taste Profile
+
+```python
+user_profile = {
+    "preferred_genre":    "lofi",     # hard categorical preference
+    "preferred_mood":     "chill",    # emotional context for listening session
+    "preferred_energy":   0.40,       # low-to-mid energy — background, not foreground
+    "preferred_valence":  0.60,       # mildly positive, not euphoric
+    "preferred_tempo_bpm": 78,        # slow groove, not driving
+}
+```
+
+This profile is deliberately specific enough to **differentiate** "intense rock" from "chill lofi":
+- A rock song with `energy=0.91` loses ~2.6 energy-similarity points vs. a lofi track at `energy=0.42`.
+- A genre mismatch (`rock` vs. `lofi`) costs the full 3.0 genre weight, an immediate ~32% score penalty.
+- A mood mismatch (`intense` vs. `chill`) costs a further 2.0 points.
+
+A profile like `preferred_genre="any"` or `preferred_energy=0.5` would compress all songs into a narrow score band and produce weak differentiation. Keep all five fields populated and specific.
+
+---
+
+### Algorithm Recipe
+
+**Data flow:** `Input (User Profile)` → `Process (score every song in the catalog)` → `Output (top-5 ranked list)`
+
+**Scoring a single song** (the *Scoring Rule*):
+
+| Feature | Match type | Points awarded | Weight |
+|---|---|---|---|
+| `genre` | Exact match = 1.0, mismatch = 0.0 | `match × 3.0` | 3.0 |
+| `mood` | Exact match = 1.0, mismatch = 0.0 | `match × 2.0` | 2.0 |
+| `energy` | Squared similarity: `1 − (pref − song)²` | `sim × 2.0` | 2.0 |
+| `valence` | Squared similarity: `1 − (pref − song)²` | `sim × 1.5` | 1.5 |
+| `tempo_bpm` | Squared similarity on normalized value `/200` | `sim × 1.0` | 1.0 |
+
+**Maximum possible score: 9.5** (perfect match on all five features)
+
+```
+score = (3.0 × genre_match)
+      + (2.0 × mood_match)
+      + (2.0 × (1 − (pref_energy  − song_energy)²))
+      + (1.5 × (1 − (pref_valence − song_valence)²))
+      + (1.0 × (1 − ((pref_tempo_bpm − song_tempo_bpm) / 200)²))
+```
+
+**Selecting recommendations** (the *Ranking Rule*): score every song in the catalog, sort descending, return the top 5.
+
+---
+
+### System Flowchart
+
+```mermaid
+flowchart TD
+    A([User Profile\ngenre · mood · energy · valence · tempo]) --> B[Load songs.csv\n18 songs]
+    B --> C{For each song\nin catalog}
+    C --> D[Compute genre_match\nbinary 0 or 1]
+    C --> E[Compute mood_match\nbinary 0 or 1]
+    C --> F[Compute energy_similarity\n1 − squared diff]
+    C --> G[Compute valence_similarity\n1 − squared diff]
+    C --> H[Compute tempo_similarity\n1 − squared diff normalized]
+    D & E & F & G & H --> I[Apply weights\n3.0 · 2.0 · 2.0 · 1.5 · 1.0]
+    I --> J[song_score out of 9.5]
+    J --> C
+    C -- all songs scored --> K[Sort all scores\ndescending]
+    K --> L([Top-5 Recommendations])
+```
+
+---
+
+### Potential Biases
+
+- **Genre dominance:** Because genre carries a 3.0 weight — nearly a third of the max score — a song that matches genre but misses every other feature still outscores a near-perfect match in the wrong genre. A blues fan asking for "chill" background music will still be pushed toward blues tracks even if lofi is more sonically appropriate for the context.
+- **Mood vocabulary mismatch:** The scoring treats "relaxed" and "chill" as completely different even though users experience them as near-identical. Any label mismatch loses the full 2.0 points, which may bury genuinely good recommendations.
+- **Sparse genre coverage:** With 18 songs, several genres (classical, metal, blues) have only one representative each. A user who prefers these genres gets a single genre-match candidate; the rest of their top-5 falls back to mood/energy similarity, which may not feel relevant.
+- **No diversity enforcement:** The ranking rule always picks the five *most similar* songs. If three lofi tracks all score 9.0+, the top-5 will be homogeneous. Real systems inject diversity to avoid recommendation bubbles.
 
 ---
 
